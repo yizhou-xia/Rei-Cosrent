@@ -1,0 +1,330 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\Denda;
+use App\Models\User;
+use App\Models\Formulir;
+use App\Models\ProfileContact;
+use Illuminate\Support\Facades\Storage;
+
+class DendaController extends Controller
+{
+    // Redirect helpers because UI is embedded on /admin/data-denda
+    public function index()
+    {
+        return redirect()->route('admin.data-denda');
+    }
+
+    public function create()
+    {
+        return redirect()->route('admin.data-denda');
+    }
+
+    public function store(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
+            'nama_kostum' => 'nullable|string|max:255',
+            'jenis_denda' => 'nullable|string|max:100',
+            'keterangan' => 'nullable|string',
+            'jumlah_denda' => 'nullable|numeric',
+            'status' => 'nullable|in:Belum Lunas,Lunas',
+            'bukti_foto_1' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_2' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_3' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_4' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_5' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_pembayaran' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+        ]);
+
+        try {
+            $data = $validated;
+
+            $user = User::where('username', $validated['nama'])->first();
+            if ($user) {
+                $orders = Formulir::where('email', $user->email)->get(['id']);
+                $blocked = $orders->contains(function ($order) {
+                    $status = strtolower((string) \App\Models\Pengembalian::where('formulir_id', $order->id)
+                        ->latest('created_at')
+                        ->value('status'));
+                    return in_array($status, ['proses', 'ditolak'], true);
+                });
+
+                if ($blocked) {
+                    return redirect()->route('admin.data-denda')
+                        ->with('error', 'Denda belum dapat ditambahkan karena pengembalian user masih diproses atau ditolak.')
+                        ->withInput();
+                }
+            }
+
+            // Ensure fields exist so MySQL strict mode doesn't fail when columns have no default
+            $data['bukti_pembayaran'] = '';
+            // Provide safe defaults for optional fields that might be missing from validated input
+            $data['keterangan'] = $validated['keterangan'] ?? '';
+            $data['jenis_denda'] = $validated['jenis_denda'] ?? '';
+            $data['jumlah_denda'] = isset($validated['jumlah_denda']) ? $validated['jumlah_denda'] : 0;
+            $data['status'] = $validated['status'] ?? 'Belum Lunas';
+
+            for ($i = 1; $i <= 5; $i++) {
+                $field = 'bukti_foto_' . $i;
+                $data[$field] = null;
+                if ($request->hasFile($field)) {
+                    $data[$field] = $request->file($field)->store('denda', 'public');
+                }
+            }
+
+            if ($request->hasFile('bukti_pembayaran')) {
+                $data['bukti_pembayaran'] = $request->file('bukti_pembayaran')->store('denda', 'public');
+            }
+
+            Denda::create($data);
+
+            return redirect()->route('admin.data-denda')->with('success', 'Data denda berhasil ditambahkan!');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-denda')->with('error', 'Gagal menambahkan data: ' . $e->getMessage());
+        }
+    }
+
+    public function edit($id)
+    {
+        return redirect()->route('admin.data-denda');
+    }
+
+    public function update(Request $request, $id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $denda = Denda::findOrFail($id);
+
+        if (strtolower((string) $denda->status) === 'lunas') {
+            return redirect()->route('admin.data-denda')->with('error', 'Denda yang sudah lunas tidak dapat diedit.');
+        }
+
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
+            'nama_kostum' => 'nullable|string|max:255',
+            'jenis_denda' => 'nullable|string|max:100',
+            'keterangan' => 'nullable|string',
+            'jumlah_denda' => 'nullable|numeric',
+            'status' => 'nullable|in:Belum Lunas,Lunas',
+            'bukti_foto_1' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_2' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_3' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_4' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_foto_5' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'bukti_pembayaran' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+        ]);
+
+        try {
+            $data = $validated;
+            // Preserve existing values when update payload omits optional fields
+            $data['keterangan'] = $validated['keterangan'] ?? $denda->keterangan ?? '';
+            $data['jenis_denda'] = $validated['jenis_denda'] ?? $denda->jenis_denda ?? '';
+            $data['jumlah_denda'] = isset($validated['jumlah_denda']) ? $validated['jumlah_denda'] : ($denda->jumlah_denda ?? 0);
+            $data['status'] = $validated['status'] ?? $denda->status ?? 'Belum Lunas';
+
+            for ($i = 1; $i <= 5; $i++) {
+                $field = 'bukti_foto_' . $i;
+                if ($request->hasFile($field)) {
+                    if ($denda->$field && Storage::disk('public')->exists($denda->$field)) {
+                        Storage::disk('public')->delete($denda->$field);
+                    }
+                    $data[$field] = $request->file($field)->store('denda', 'public');
+                } elseif ($request->boolean('remove_' . $field)) {
+                    if ($denda->$field && Storage::disk('public')->exists($denda->$field)) {
+                        Storage::disk('public')->delete($denda->$field);
+                    }
+                    $data[$field] = null;
+                }
+            }
+
+            if ($request->hasFile('bukti_pembayaran')) {
+                if ($denda->bukti_pembayaran && Storage::disk('public')->exists($denda->bukti_pembayaran)) {
+                    Storage::disk('public')->delete($denda->bukti_pembayaran);
+                }
+                $data['bukti_pembayaran'] = $request->file('bukti_pembayaran')->store('denda', 'public');
+            }
+
+            $denda->update($data);
+
+            return redirect()->route('admin.data-denda')->with('success', 'Data denda berhasil diperbarui!');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-denda')->with('error', 'Gagal memperbarui data: ' . $e->getMessage());
+        }
+    }
+
+    public function destroy(Request $request, $id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $denda = Denda::findOrFail($id);
+
+            for ($i = 1; $i <= 5; $i++) {
+                $field = 'bukti_foto_' . $i;
+                if ($denda->$field && Storage::disk('public')->exists($denda->$field)) {
+                    Storage::disk('public')->delete($denda->$field);
+                }
+            }
+            if ($denda->bukti_pembayaran && Storage::disk('public')->exists($denda->bukti_pembayaran)) {
+                Storage::disk('public')->delete($denda->bukti_pembayaran);
+            }
+
+            $denda->delete();
+
+            return redirect()->route('admin.data-denda')->with('success', 'Data denda berhasil dihapus!');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-denda')->with('error', 'Gagal menghapus data: ' . $e->getMessage());
+        }
+    }
+
+    // User-facing list of denda for the logged-in user
+    public function userIndex()
+    {
+        if (!session('user_logged_in')) {
+            return redirect()->route('login');
+        }
+
+        $user = User::find(session('user_id'));
+        if (!$user) {
+            return redirect()->route('login')->with('error', 'User tidak ditemukan.');
+        }
+
+        $dendas = Denda::where(function($q) use ($user) {
+            foreach ($this->getDendaIdentifiers($user) as $identifier) {
+                $q->orWhereRaw('LOWER(TRIM(nama)) = ?', [$identifier]);
+            }
+        })->orderBy('created_at', 'desc')->get();
+
+        $blockedCostumes = Formulir::where('email', $user->email)
+            ->get(['id', 'nama_kostum'])
+            ->filter(function ($order) {
+                $status = strtolower((string) \App\Models\Pengembalian::where('formulir_id', $order->id)
+                    ->latest('created_at')
+                    ->value('status'));
+
+                return in_array($status, ['proses', 'ditolak'], true);
+            })
+            ->pluck('nama_kostum')
+            ->filter()
+            ->map(fn ($costume) => strtolower(trim((string) $costume)))
+            ->unique()
+            ->all();
+
+        $dendas->each(function ($denda) use ($blockedCostumes) {
+            $costume = strtolower(trim((string) ($denda->nama_kostum ?? '')));
+            if ($costume !== '' && in_array($costume, $blockedCostumes, true)) {
+                $denda->nama_kostum = '-';
+            }
+        });
+
+        return view('user.denda-saya', [
+            'dendas' => $dendas,
+            'user' => $user,
+        ]);
+    }
+
+    // Show payment page for a specific denda
+    public function showPayment($id)
+    {
+        if (!session('user_logged_in')) {
+            return redirect()->route('login');
+        }
+
+        $user = User::find(session('user_id'));
+        if (!$user) {
+            return redirect()->route('login')->with('error', 'User tidak ditemukan.');
+        }
+
+        $denda = Denda::findOrFail($id);
+
+        if (!$this->dendaMatchesUser($denda, $user)) {
+            return redirect()->route('user.denda-saya')->with('error', 'Anda tidak memiliki akses ke data denda ini.');
+        }
+
+        $profile = ProfileContact::find(1);
+
+        return view('user.bayar-denda', [
+            'denda' => $denda,
+            'profile' => $profile,
+        ]);
+    }
+
+    // Handle upload of bukti pembayaran for a denda and mark it as Lunas
+    public function storePayment(Request $request, $id)
+    {
+        if (!session('user_logged_in')) {
+            return redirect()->route('login');
+        }
+
+        $user = User::find(session('user_id'));
+        if (!$user) {
+            return redirect()->route('login')->with('error', 'User tidak ditemukan.');
+        }
+
+        $denda = Denda::findOrFail($id);
+
+        if (!$this->dendaMatchesUser($denda, $user)) {
+            return redirect()->route('user.denda-saya')->with('error', 'Anda tidak memiliki akses ke data denda ini.');
+        }
+
+        $request->validate([
+            'bukti_pembayaran' => 'required|file|mimes:jpg,jpeg,png,pdf|max:5120',
+        ]);
+
+        $file = $request->file('bukti_pembayaran');
+        $filename = 'bukti_denda_' . $id . '_' . time() . '.' . $file->getClientOriginalExtension();
+        $path = $file->storeAs('denda', $filename, 'public');
+
+        try {
+            // delete old if exists
+            if ($denda->bukti_pembayaran && Storage::disk('public')->exists($denda->bukti_pembayaran)) {
+                Storage::disk('public')->delete($denda->bukti_pembayaran);
+            }
+
+            $denda->bukti_pembayaran = $path;
+            $denda->status = 'Lunas';
+            $denda->save();
+        } catch (\Exception $e) {
+            return redirect()->route('user.denda-saya')->with('error', 'Gagal menyimpan bukti pembayaran: ' . $e->getMessage());
+        }
+
+        return redirect()->route('user.denda-saya')->with('success', 'Bukti pembayaran berhasil diunggah dan status denda diperbarui menjadi Lunas.');
+    }
+
+    /**
+     * Build a normalized set of identifiers that may be used to match a user to denda.
+     */
+    private function getDendaIdentifiers(User $user): array
+    {
+        $nickName = strtolower(trim($user->nick_name ?? ''));
+        $username = strtolower(trim($user->username ?? ''));
+        $email = strtolower(trim($user->email ?? ''));
+        $identifiers = array_filter([$nickName, $username, $email]);
+
+        $formulirNames = Formulir::where('email', $user->email)
+            ->pluck('nama')
+            ->map(fn($value) => strtolower(trim($value)))
+            ->filter()
+            ->unique()
+            ->toArray();
+
+        return array_unique(array_merge($identifiers, $formulirNames));
+    }
+
+    private function dendaMatchesUser(Denda $denda, User $user): bool
+    {
+        $dendaNama = strtolower(trim($denda->nama ?? ''));
+        return in_array($dendaNama, $this->getDendaIdentifiers($user), true);
+    }
+}

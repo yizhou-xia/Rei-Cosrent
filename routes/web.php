@@ -1,0 +1,161 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\AdminController;
+use App\Http\Controllers\RajaOngkirController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\PembayaranController;
+use App\Http\Controllers\UlasanController;
+use App\Http\Controllers\Auth\PasswordResetController;
+
+Route::get('/', function () {
+    return redirect()->route('home');
+});
+
+Route::get('/home', [HomeController::class, 'index'])->name('home');
+// Public Katalog Kostum page
+Route::get('/katalog_kostum', [HomeController::class, 'katalogKostum'])->name('katalog.kostum');
+// Public Peraturan page
+Route::get('/peraturan', [HomeController::class, 'peraturan'])->name('peraturan');
+// Public Booking Dates page
+Route::get('/tanggal-pemesanan', [HomeController::class, 'bookingDates'])->name('tanggal.pemesanan');
+Route::redirect('/booking-dates', '/tanggal-pemesanan');
+// Formulir Penyewaan Routes
+Route::get('/formulir-penyewaan/cek-ketersediaan', [HomeController::class, 'cekKetersediaanKostum'])->name('formulir.penyewaan.availability');
+Route::get('/formulir-penyewaan/{id_kostum}', [HomeController::class, 'formulirPenyewaan'])->name('formulir.penyewaan');
+Route::post('/formulir-penyewaan/submit', [HomeController::class, 'submitFormulirPenyewaan'])->name('formulir.penyewaan.submit');
+Route::get('/formulir-berhasil', [HomeController::class, 'formulirBerhasil'])->name('formulir.berhasil');
+
+// User Profile Routes (Protected)
+Route::get('/user/profil', [HomeController::class, 'userProfile'])->name('user.profile');
+Route::redirect('/user/dashboard', '/user/profil');
+Route::redirect('/user/profile', '/user/profil');
+Route::post('/user/profile/update', [HomeController::class, 'updateUserProfile'])->name('user.profile.update');
+Route::post('/user/profile/delete-photo', [HomeController::class, 'deleteProfilePhoto'])->name('user.profile.delete-photo');
+Route::delete('/user/account/delete', [HomeController::class, 'deleteAccount'])->name('user.account.delete');
+
+// Pesanan Saya Routes
+Route::get('/pesanan-saya', [HomeController::class, 'pesananSaya'])->name('user.pesanan.saya');
+Route::get('/pesanan-saya', [HomeController::class, 'pesananSaya'])->name('user.pesanan');
+Route::get('/pesanan-saya/{id}/edit', [HomeController::class, 'editPesanan'])->name('user.pesanan.edit');
+Route::post('/pesanan-saya/{id}/update', [HomeController::class, 'updatePesanan'])->name('user.pesanan.update');
+Route::post('/pesanan-saya/{id}/cancel', [HomeController::class, 'cancelPesanan'])->name('user.pesanan.cancel');
+
+// Pengembalian Routes
+Route::get('/pengembalian-saya', [HomeController::class, 'pengembalianSaya'])->name('user.pengembalian');
+Route::post('/pengembalian-saya/{id}/submit', [HomeController::class, 'submitPengembalian'])->name('user.pengembalian.submit');
+
+// Auth Routes (Unified Login/Register for Admin & User)
+Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
+Route::post('/login', [AuthController::class, 'login'])->name('login.post');
+Route::get('/register', [AuthController::class, 'showRegister'])->name('register');
+Route::post('/register', [AuthController::class, 'register'])->name('register.post');
+Route::match(['get', 'post'], '/logout', [AuthController::class, 'logout'])->name('logout');
+
+// Password Reset Routes (Forgot Password)
+Route::get('/forgot-password', [PasswordResetController::class, 'requestForm'])->name('password.request');
+Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLink'])->name('password.email');
+Route::get('/reset-password/{token}', [PasswordResetController::class, 'resetForm'])->name('password.reset');
+Route::post('/reset-password', [PasswordResetController::class, 'reset'])->name('password.update');
+Route::post('/forgot-password/approved', [PasswordResetController::class, 'resetApproved'])->name('password.update.approved');
+
+// Google OAuth Routes
+Route::get('/auth/google', [AuthController::class, 'redirectToGoogle'])->name('auth.google');
+Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback'])->name('auth.google.callback');
+
+// Admin Auth Routes (Unified: reuse AuthController)
+Route::get('/admin/login', [AuthController::class, 'showLogin'])->name('admin.login');
+Route::post('/admin/authenticate', [AuthController::class, 'login'])->name('admin.authenticate');
+// Dashboard entry (named route expected by controllers)
+Route::get('/admin', [AdminController::class, 'dashboard'])->name('admin.dashboard');
+Route::get('/admin/dashboard', [AdminController::class, 'profile'])->name('admin.profile');
+Route::redirect('/admin/profile', '/admin/dashboard');
+Route::get('/admin/logout', [AdminController::class, 'logout'])->name('admin.logout');
+
+// Admin stats endpoint (AJAX) for dashboard charts
+Route::get('/admin/stats', [AdminController::class, 'stats'])->name('admin.stats');
+Route::get('/admin/data-tanggal', [AdminController::class, 'dataTanggal'])->name('admin.data-tanggal');
+Route::post('/admin/data-tanggal/{sheetCode}/update', [AdminController::class, 'updateDataTanggal'])->name('admin.data-tanggal.update');
+
+// Data Katalog Routes
+Route::get('/admin/data-katalog', [AdminController::class, 'dataKatalog'])->name('admin.data-katalog');
+Route::post('/admin/katalog/store', [AdminController::class, 'storeKatalog'])->name('admin.katalog.store');
+Route::post('/admin/katalog/update', [AdminController::class, 'updateKatalog'])->name('admin.katalog.update');
+Route::post('/admin/katalog/toggle/{id}', [AdminController::class, 'toggleKatalog'])->name('admin.katalog.toggle');
+Route::post('/admin/katalog/delete/{id}', [AdminController::class, 'deleteKatalog'])->name('admin.katalog.delete');
+
+// Data Kostum Routes
+Route::get('/admin/data-kostum', [AdminController::class, 'dataKostum'])->name('admin.data-kostum');
+Route::post('/admin/kostum/store', [AdminController::class, 'storeKostum'])->name('admin.kostum.store');
+Route::post('/admin/kostum/update', [AdminController::class, 'updateKostum'])->name('admin.kostum.update');
+Route::post('/admin/kostum/toggle/{id}', [AdminController::class, 'toggleKostum'])->name('admin.kostum.toggle');
+Route::post('/admin/kostum/delete/{id}', [AdminController::class, 'deleteKostum'])->name('admin.kostum.delete');
+Route::delete('/admin/kostum/image/{imageId}', [AdminController::class, 'deleteKostumImage'])->name('admin.kostum.image.delete');
+
+// Admin Profile Routes
+Route::get('/admin/profile', [AdminController::class, 'profileContact'])->name('admin.profile.settings');
+Route::get('/admin/profile-contact', [AdminController::class, 'profileContact'])->name('admin.profile-contact');
+Route::post('/admin/profile/update', [AdminController::class, 'updateProfileContact'])->name('admin.profile.update');
+Route::post('/admin/profile/update-photo', [AdminController::class, 'updateProfileContactPhoto'])->name('admin.profile.update-photo');
+Route::post('/admin/profile/delete-photo', [AdminController::class, 'deleteProfileContactPhoto'])->name('admin.profile.delete-photo');
+Route::post('/admin/profile/update-qris', [AdminController::class, 'updatePaymentQris'])->name('admin.profile.update-qris');
+Route::post('/admin/profile/delete-qris', [AdminController::class, 'deletePaymentQris'])->name('admin.profile.delete-qris');
+
+// Data Aturan Routes
+Route::get('/admin/data-aturan', [AdminController::class, 'dataAturan'])->name('admin.data-aturan');
+Route::post('/admin/aturan/store', [AdminController::class, 'storeAturan'])->name('admin.aturan.store');
+Route::post('/admin/aturan/update', [AdminController::class, 'updateAturan'])->name('admin.aturan.update');
+Route::post('/admin/aturan/delete/{id}', [AdminController::class, 'deleteAturan'])->name('admin.aturan.delete');
+
+// Data Pesanan Routes
+Route::get('/admin/data-pesanan', [AdminController::class, 'dataPesanan'])->name('admin.data-pesanan');
+// Data Pengembalian Routes
+Route::get('/admin/data-pengembalian', [AdminController::class, 'dataPengembalian'])->name('admin.data-pengembalian');
+Route::post('/admin/pengembalian/{id}/verifikasi', [AdminController::class, 'verifikasiPengembalian'])->name('admin.pengembalian.verifikasi');
+Route::delete('/admin/pengembalian/{id}/delete', [AdminController::class, 'deletePengembalian'])->name('admin.pengembalian.delete');
+// Data Denda & Kerusakan Routes
+Route::get('/admin/data-denda', [AdminController::class, 'dataDenda'])->name('admin.data-denda');
+// CRUD for denda (store/update/destroy used by embedded UI on /admin/data-denda)
+Route::post('/admin/denda/store', [\App\Http\Controllers\DendaController::class, 'store'])->name('admin.denda.store');
+Route::post('/admin/denda/{id}/update', [\App\Http\Controllers\DendaController::class, 'update'])->name('admin.denda.update');
+Route::post('/admin/denda/{id}/delete', [\App\Http\Controllers\DendaController::class, 'destroy'])->name('admin.denda.destroy');
+// User-facing Denda page
+Route::get('/denda-saya', [\App\Http\Controllers\DendaController::class, 'userIndex'])->name('user.denda-saya');
+// Halaman bayar denda untuk user
+Route::get('/bayar-denda/{id}', [\App\Http\Controllers\DendaController::class, 'showPayment'])->name('denda.bayar');
+Route::post('/bayar-denda/{id}/upload', [\App\Http\Controllers\DendaController::class, 'storePayment'])->name('denda.bayar.upload');
+Route::post('/admin/pesanan/update-status/{id}', [AdminController::class, 'updatePesananStatus'])->name('admin.pesanan.update-status');
+// Admin delete pesanan (DELETE)
+Route::delete('/admin/pesanan/{id}/delete', [AdminController::class, 'deletePesanan'])->name('admin.pesanan.delete');
+
+// Data Pengguna (Users) Routes
+Route::get('/admin/data-pengguna', [AdminController::class, 'dataPengguna'])->name('admin.data-pengguna');
+Route::post('/admin/pengguna/update', [AdminController::class, 'updatePengguna'])->name('admin.pengguna.update');
+Route::post('/admin/pengguna/approve/{id}', [AdminController::class, 'approvePenggunaReset'])->name('admin.pengguna.approve');
+Route::post('/admin/pengguna/delete/{id}', [AdminController::class, 'deletePengguna'])->name('admin.pengguna.delete');
+
+// Data Ulasan Routes
+Route::get('/admin/data-ulasan', [AdminController::class, 'dataUlasan'])->name('admin.data-ulasan');
+Route::post('/admin/ulasan/balas', [AdminController::class, 'balasUlasan'])->name('admin.ulasan.balas');
+Route::delete('/admin/ulasan/{id}/delete', [AdminController::class, 'deleteUlasan'])->name('admin.ulasan.delete');
+
+// Pembayaran Pesanan
+Route::get('/pembayaran/{id}', [PembayaranController::class, 'show'])->name('pembayaran');
+Route::post('/pembayaran/{id}/upload', [PembayaranController::class, 'store'])->name('pembayaran.upload');
+
+// Ulasan (Review) Routes
+Route::get('/ulasan/{formulirId}', [UlasanController::class, 'createOrEdit'])->name('user.ulasan.form');
+Route::post('/ulasan/{formulirId}', [UlasanController::class, 'store'])->name('user.ulasan.store');
+Route::put('/ulasan/{formulirId}', [UlasanController::class, 'update'])->name('user.ulasan.update');
+Route::delete('/ulasan/{formulirId}/delete-image/{imageNumber}', [UlasanController::class, 'deleteImage'])->name('user.ulasan.delete-image');
+
+// Public: Lihat ulasan per kostum
+Route::get('/lihat-ulasan/{id_kostum}', [UlasanController::class, 'lihatUlasanKostum'])->name('lihat-ulasan');
+
+// RajaOngkir proxy endpoints (AJAX)
+Route::get('/rajaongkir/provinces', [RajaOngkirController::class, 'provinces'])->name('rajaongkir.provinces');
+Route::get('/rajaongkir/cities', [RajaOngkirController::class, 'cities'])->name('rajaongkir.cities');
+Route::post('/rajaongkir/cost', [RajaOngkirController::class, 'cost'])->name('rajaongkir.cost');
+Route::get('/rajaongkir/shipping-cost', [RajaOngkirController::class, 'shippingCost'])->name('rajaongkir.shipping-cost');
+

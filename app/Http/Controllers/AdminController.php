@@ -1,0 +1,1580 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\DataKatalog;
+use App\Models\BookingDate;
+use App\Models\DataKostum;
+use App\Models\ProfileContact;
+use App\Models\Aturan;
+use App\Models\Formulir;
+use App\Models\User;
+use App\Models\Denda;
+use App\Models\Pembayaran;
+use App\Models\Pengembalian;
+use App\Models\Ulasan;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\JsonResponse;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+
+class AdminController extends Controller
+{
+    // Dashboard
+    public function dashboard()
+    {
+        // Check if admin is logged in
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        // Always redirect to the profile handler so the view receives required data
+        return redirect()->route('admin.profile');
+    }
+
+    // Admin Profile
+    public function profile()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $admin_name = session('admin_name');
+        $katalog_count = DataKatalog::count();
+        $kostum_count = DataKostum::count();
+        $aturan_count = Aturan::count();
+        $revenueStatuses = ['confirmed', 'diterima', 'completed', 'selesai'];
+        $pesanan_count = Formulir::whereIn('status', ['diterima', 'selesai'])->count();
+        $pesanan_verifikasi_count = Formulir::whereIn('status', ['proses', 'revisi'])->count();
+        $users_count = User::count();
+        $denda_count = Denda::count();
+        $total_denda = Denda::sum('jumlah_denda');
+        $ulasan_count = Ulasan::count();
+        $pengembalian_verifikasi_count = Pengembalian::where('status', 'proses')->count();
+        $pengembalian_count = Pengembalian::where('status', 'diterima')->count();
+        $profile_contact = ProfileContact::find(1);
+        session(['admin_profile_photo' => $profile_contact->photo ?? null]);
+        
+        // Get latest 5 orders
+        $latest_orders = Formulir::orderByDesc('created_at')->take(5)->get();
+        
+        // Get total revenue from accepted and completed orders only
+        $total_revenue = Formulir::whereIn('status', $revenueStatuses)->sum('total_harga');
+        
+        // Get top 5 kostum
+        $top_kostum = Formulir::selectRaw('nama_kostum, COUNT(*) as count')
+            ->groupBy('nama_kostum')
+            ->orderByDesc('count')
+            ->take(5)
+            ->get();
+        
+        // Get kostum breakdown for pie chart
+        $top_3_kostum = $top_kostum->take(3);
+        $top_3_total = $top_3_kostum->sum('count');
+        $other_count = Formulir::count() - $top_3_total;
+        
+        // Get order statuses
+        $order_statuses = Formulir::selectRaw('status, COUNT(*) as count')
+            ->groupBy('status')
+            ->get();
+        
+        // Get payment methods
+        $payment_methods = Formulir::selectRaw('metode_pembayaran, COUNT(*) as count')
+            ->groupBy('metode_pembayaran')
+            ->get();
+
+        return view('admin.dashboard', [
+            'admin_name' => $admin_name,
+            'katalog_count' => $katalog_count,
+            'kostum_count' => $kostum_count,
+            'aturan_count' => $aturan_count,
+            'pesanan_count' => $pesanan_count,
+            'pesanan_verifikasi_count' => $pesanan_verifikasi_count,
+            'pengembalian_verifikasi_count' => $pengembalian_verifikasi_count,
+            'denda_count' => $denda_count,
+            'total_denda' => $total_denda,
+            'users_count' => $users_count,
+            'ulasan_count' => $ulasan_count,
+            'pengembalian_count' => $pengembalian_count,
+            'profile_contact' => $profile_contact,
+            'latest_orders' => $latest_orders,
+            'total_revenue' => $total_revenue,
+            'top_kostum' => $top_kostum,
+            'top_3_kostum' => $top_3_kostum,
+            'other_count' => $other_count,
+            'order_statuses' => $order_statuses,
+            'payment_methods' => $payment_methods,
+        ]);
+    }
+
+    // Admin Data Tanggal (month view)
+    public function dataTanggal(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $years = Formulir::selectRaw('YEAR(tanggal_pemakaian) as y')
+            ->whereNotNull('tanggal_pemakaian')
+            ->groupBy('y')
+            ->orderBy('y', 'desc')
+            ->pluck('y')
+            ->toArray();
+
+        $current = Carbon::now();
+        $selectedYear = (int) $request->query('year', $current->year);
+        $selectedMonth = (int) $request->query('month', $current->month);
+
+        if (empty($years)) {
+            $years = [$current->year];
+        }
+
+        $startOfMonth = Carbon::create($selectedYear, $selectedMonth, 1);
+        $daysInMonth = $startOfMonth->daysInMonth;
+        $dates = [];
+        for ($d = 1; $d <= $daysInMonth; $d++) {
+            $dates[] = $startOfMonth->copy()->day($d)->format('Y-m-d');
+        }
+
+        $kostums = DataKostum::orderBy('judul')->orderBy('nama_kostum')->get();
+
+        $orders = Formulir::whereIn('status', ['proses', 'revisi', 'diterima', 'selesai'])
+            ->whereNotNull('tanggal_pemakaian')
+            ->whereDate('tanggal_pemakaian', '<=', $startOfMonth->copy()->endOfMonth()->toDateString())
+            ->where(function ($query) use ($startOfMonth) {
+                $query->whereDate('tanggal_pengembalian', '>=', $startOfMonth->toDateString())
+                    ->orWhereNull('tanggal_pengembalian');
+            })
+            ->get();
+
+        $returnStatuses = [];
+        if (Schema::hasTable('pengembalian') && Schema::hasColumn('pengembalian', 'formulir_id')) {
+            $returnStatuses = Pengembalian::whereIn('formulir_id', $orders->pluck('id'))
+                ->orderBy('created_at')
+                ->get(['formulir_id', 'status'])
+                ->mapWithKeys(fn ($return) => [$return->formulir_id => strtolower((string) $return->status)])
+                ->all();
+        }
+
+        $usernamesByEmail = User::whereIn('email', $orders->pluck('email')->filter()->unique()->values())
+            ->pluck('username', 'email')
+            ->mapWithKeys(fn ($username, $email) => [strtolower(trim((string) $email)) => $username])
+            ->all();
+
+        $bookingMap = [];
+        foreach ($orders as $o) {
+            $kname = trim((string) $o->nama_kostum);
+            if (!$kname) continue;
+
+            $emailKey = strtolower(trim((string) $o->email));
+            $bookingUser = $usernamesByEmail[$emailKey] ?? $o->nama;
+            $returnStatus = $returnStatuses[$o->id] ?? null;
+            $bookingStatus = $o->status;
+            $statusClass = $bookingStatus === 'selesai' || $returnStatus === 'diterima'
+                ? 'booking-status-completed'
+                : ($bookingStatus === 'diterima' ? 'booking-status-confirmed' : 'booking-status-pending');
+            $rentalStart = Carbon::parse($o->tanggal_pemakaian)->startOfDay();
+            $rentalEnd = $o->tanggal_pengembalian
+                ? Carbon::parse($o->tanggal_pengembalian)->startOfDay()
+                : $rentalStart->copy();
+
+            for ($date = $rentalStart->copy(); $date->lte($rentalEnd); $date->addDay()) {
+                if ($date->year !== $selectedYear || $date->month !== $selectedMonth) {
+                    continue;
+                }
+
+                $bookingMap[$kname][$date->format('Y-m-d')] = [
+                    'username' => $bookingUser,
+                    'order_id' => $o->id,
+                    'status_class' => $statusClass,
+                ];
+            }
+        }
+
+        return view('admin.data-tanggal', [
+            'kostums' => $kostums,
+            'dates' => $dates,
+            'bookingMap' => $bookingMap,
+            'years' => $years,
+            'selectedYear' => $selectedYear,
+            'selectedMonth' => $selectedMonth,
+            'isAdmin' => true,
+        ]);
+    }
+
+    // ==================== DATA ULASAN ====================
+
+    public function dataUlasan()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $ulasanList = Ulasan::query()
+            ->leftJoin('formulir', 'ulasan.id', '=', 'formulir.id')
+            ->leftJoin('users', function ($join) {
+                $join->whereRaw(
+                    'CONVERT(formulir.email USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(users.email USING utf8mb4) COLLATE utf8mb4_unicode_ci'
+                );
+            })
+            ->select([
+                'ulasan.*',
+                DB::raw('COALESCE(users.username, formulir.nama) as nama_user'),
+                'formulir.email as email_user',
+                'formulir.nama_kostum as nama_kostum',
+                'formulir.status as status_pesanan',
+            ])
+            ->orderByDesc('ulasan.created_at')
+            ->get();
+
+        return view('admin.data-ulasan', [
+            'ulasanList' => $ulasanList,
+        ]);
+    }
+
+    public function balasUlasan(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'formulir_id' => 'required|integer|exists:ulasan,id',
+            'balasan' => 'nullable|string|max:5000',
+        ], [
+            'formulir_id.required' => 'ID pesanan wajib diisi.',
+            'formulir_id.exists' => 'Ulasan untuk pesanan tersebut tidak ditemukan.',
+        ]);
+
+        try {
+            $ulasan = Ulasan::findOrFail($validated['formulir_id']);
+            $balasan = isset($validated['balasan']) ? trim((string) $validated['balasan']) : '';
+            $ulasan->balasan = ($balasan === '') ? null : $balasan;
+            $ulasan->save();
+
+            return redirect()->route('admin.data-ulasan')->with('success', 'Balasan berhasil disimpan.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-ulasan')->with('error', 'Gagal menyimpan balasan: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteUlasan($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $ulasan = Ulasan::findOrFail($id);
+
+            for ($i = 1; $i <= 5; $i++) {
+                $field = 'gambar_' . $i;
+                if ($ulasan->$field) {
+                    Storage::disk('public')->delete($ulasan->$field);
+                }
+            }
+
+            $ulasan->delete();
+
+            return redirect()->route('admin.data-ulasan')->with('success', 'Ulasan berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-ulasan')->with('error', 'Gagal menghapus ulasan: ' . $e->getMessage());
+        }
+    }
+
+    // AJAX stats endpoint for dashboard charts (orders, revenue)
+    public function stats(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return response()->json(['error' => 'unauthorized'], 401);
+        }
+
+        $period = $request->input('period', 'week'); // day, week, month, year
+        $now = Carbon::now();
+        $revenueStatuses = ['confirmed', 'diterima', 'completed', 'selesai'];
+
+        $labels = [];
+        $ordersData = [];
+        $revenueData = [];
+
+        switch ($period) {
+            case 'day':
+                $start = $now->copy()->startOfDay();
+                for ($h = 0; $h < 24; $h++) {
+                    $from = $start->copy()->addHours($h);
+                    $to = $from->copy()->endOfHour();
+                    $labels[] = $from->format('H:00');
+
+                    $orders = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->count();
+                    $revenue = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->sum('total_harga');
+
+                    $ordersData[] = $orders;
+                    $revenueData[] = (float) $revenue;
+                }
+                break;
+            case 'month':
+                $start = $now->copy()->subDays(29)->startOfDay();
+                for ($d = 0; $d < 30; $d++) {
+                    $from = $start->copy()->addDays($d)->startOfDay();
+                    $to = $from->copy()->endOfDay();
+                    $labels[] = $from->format('d M');
+
+                    $orders = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->count();
+                    $revenue = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->sum('total_harga');
+
+                    $ordersData[] = $orders;
+                    $revenueData[] = (float) $revenue;
+                }
+                break;
+            case 'year':
+                $start = $now->copy()->startOfYear();
+                for ($m = 0; $m < 12; $m++) {
+                    $from = $start->copy()->addMonths($m)->startOfMonth();
+                    $to = $from->copy()->endOfMonth();
+                    $labels[] = $from->format('M');
+
+                    $orders = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->count();
+                    $revenue = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->sum('total_harga');
+
+                    $ordersData[] = $orders;
+                    $revenueData[] = (float) $revenue;
+                }
+                break;
+            case 'week':
+            default:
+                $start = $now->copy()->subDays(6)->startOfDay();
+                for ($d = 0; $d < 7; $d++) {
+                    $from = $start->copy()->addDays($d)->startOfDay();
+                    $to = $from->copy()->endOfDay();
+                    $labels[] = $from->format('D d');
+
+                    $orders = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->count();
+                    $revenue = Formulir::whereBetween('created_at', [$from, $to])
+                        ->whereIn('status', $revenueStatuses)
+                        ->sum('total_harga');
+
+                    $ordersData[] = $orders;
+                    $revenueData[] = (float) $revenue;
+                }
+        }
+
+        $periodStart = $start ?? $now->copy()->subDays(6)->startOfDay();
+        $periodEnd = $to ?? $now->copy()->endOfDay();
+
+        $totalOrders = Formulir::whereBetween('created_at', [$periodStart, $periodEnd])
+            ->whereIn('status', $revenueStatuses)
+            ->count();
+        $totalRevenue = Formulir::whereBetween('created_at', [$periodStart, $periodEnd])
+            ->whereIn('status', $revenueStatuses)
+            ->sum('total_harga');
+
+        return response()->json([
+            'labels' => $labels,
+            'datasets' => [
+                'orders' => $ordersData,
+                'revenue' => $revenueData,
+            ],
+            'totals' => [
+                'orders' => $totalOrders,
+                'revenue' => (float) $totalRevenue,
+            ],
+            'period' => $period,
+        ]);
+    }
+
+    // ==================== DATA PENGGUNA ====================
+
+    public function dataPengguna()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $users = User::orderBy('created_at', 'desc')->get();
+
+        return view('admin.data-pengguna', [
+            'users' => $users,
+        ]);
+    }
+
+    public function updatePengguna(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $rules = [
+            'id' => 'required|integer|exists:users,id',
+        ];
+
+        if ($request->filled('username')) {
+            $rules['username'] = 'required|string|max:255|unique:users,username,' . $request->input('id');
+        }
+
+        if ($request->filled('email')) {
+            $rules['email'] = 'required|email|max:255|unique:users,email,' . $request->input('id');
+        }
+
+        if ($request->filled('password')) {
+            $rules['password'] = 'required|string|min:8|confirmed';
+        }
+
+        if ($request->has('nick_name')) {
+            $rules['nick_name'] = 'nullable|string|max:255';
+        }
+
+        if ($request->has('instagram')) {
+            $rules['instagram'] = 'nullable|string|max:50';
+        }
+
+        if ($request->has('jenis_kelamin')) {
+            $rules['jenis_kelamin'] = 'nullable|in:Pria,Wanita';
+        }
+
+        $validated = $request->validate($rules);
+
+        try {
+            $user = User::findOrFail($validated['id']);
+            if (array_key_exists('username', $validated)) {
+                $user->username = $validated['username'];
+            }
+            if (array_key_exists('nick_name', $validated)) {
+                $user->nick_name = $validated['nick_name'];
+            }
+            if (array_key_exists('instagram', $validated)) {
+                $user->instagram = $validated['instagram'] ?? null;
+            }
+            if (array_key_exists('email', $validated)) {
+                $user->email = $validated['email'];
+            }
+            if (array_key_exists('jenis_kelamin', $validated)) {
+                $user->jenis_kelamin = $validated['jenis_kelamin'];
+            }
+
+            if (!empty($validated['password'])) {
+                $user->password = Hash::make($validated['password']);
+                $user->remember_token = Str::random(60);
+            }
+            $user->save();
+
+            return redirect()->route('admin.data-pengguna')->with('success', 'Pengguna berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pengguna')->with('error', 'Gagal memperbarui pengguna: ' . $e->getMessage());
+        }
+    }
+
+    public function approvePenggunaReset($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $user = User::findOrFail($id);
+            if (!$user->password_reset_requested_at) {
+                return redirect()->route('admin.data-pengguna')->with('error', 'Tidak ada permintaan reset password untuk pengguna ini.');
+            }
+
+            if (!Schema::hasColumn('users', 'password_reset_pending_hash') || !$user->password_reset_pending_hash) {
+                return redirect()->route('admin.data-pengguna')->with('error', 'Password baru belum diajukan oleh pengguna.');
+            }
+
+            $user->password = $user->password_reset_pending_hash;
+            $user->remember_token = Str::random(60);
+            $user->password_reset_pending_hash = null;
+            $user->password_reset_requested_at = null;
+            $user->password_reset_approved_at = null;
+            $user->save();
+
+            return redirect()->route('admin.data-pengguna')->with('success', 'Permintaan reset password berhasil disetujui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pengguna')->with('error', 'Gagal menyetujui permintaan: ' . $e->getMessage());
+        }
+    }
+
+    public function deletePengguna($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            User::findOrFail($id)->delete();
+            return redirect()->route('admin.data-pengguna')->with('success', 'Pengguna berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pengguna')->with('error', 'Gagal menghapus pengguna: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA KATALOG ====================
+
+    public function dataKatalog(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $search = $request->input('search', '');
+        $filter_kategori = $request->input('kategori', '');
+        $sort = $request->input('sort', 'id_desc');
+
+        $katalogQuery = DataKatalog::query();
+
+        if ($search !== '') {
+            $katalogQuery->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('kategori', 'like', "%{$search}%");
+            });
+        }
+
+        if ($filter_kategori !== '') {
+            $katalogQuery->where('kategori', $filter_kategori);
+        }
+
+        switch ($sort) {
+            case 'nama_asc':
+                $katalogQuery->orderBy('name', 'asc');
+                break;
+            case 'nama_desc':
+                $katalogQuery->orderBy('name', 'desc');
+                break;
+            default:
+                $katalogQuery->orderBy('id', 'desc');
+        }
+
+        $katalog = $katalogQuery->get();
+        $categories = DataKatalog::distinct()->pluck('kategori')->filter();
+
+        return view('admin.data-katalog', [
+            'katalog' => $katalog,
+            'search' => $search,
+            'filter_kategori' => $filter_kategori,
+            'sort' => $sort,
+            'categories' => $categories,
+        ]);
+    }
+
+    public function storeKatalog(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|unique:data_katalog,name',
+            'kategori' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:5000',
+            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'remove_image' => 'nullable|in:0,1',
+        ]);
+
+        try {
+            $imagePath = null;
+            if ($request->hasFile('image')) {
+                $imagePath = $request->file('image')->store('katalog_images', 'public');
+            }
+
+            DataKatalog::create([
+                'name' => $validated['name'],
+                'kategori' => $validated['kategori'],
+                'description' => $validated['description'],
+                'image' => $imagePath,
+            ]);
+
+            return redirect()->route('admin.data-katalog')->with('success', 'Katalog berhasil ditambahkan.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-katalog')->with('error', 'Gagal menambahkan katalog: ' . $e->getMessage());
+        }
+    }
+
+    public function updateKatalog(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:data_katalog,id',
+            'name' => 'required|string|max:255|unique:data_katalog,name,' . $request->input('id'),
+            'kategori' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:5000',
+            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'remove_image' => 'nullable|in:0,1',
+        ]);
+
+        try {
+            $katalog = DataKatalog::findOrFail($validated['id']);
+            $katalog->name = $validated['name'];
+            $katalog->kategori = $validated['kategori'];
+            $katalog->description = $validated['description'];
+
+            if ($request->hasFile('image')) {
+                if ($katalog->image && Storage::disk('public')->exists($katalog->image)) {
+                    Storage::disk('public')->delete($katalog->image);
+                }
+                $katalog->image = $request->file('image')->store('katalog_images', 'public');
+            } elseif ($request->boolean('remove_image')) {
+                if ($katalog->image && Storage::disk('public')->exists($katalog->image)) {
+                    Storage::disk('public')->delete($katalog->image);
+                }
+                $katalog->image = null;
+            }
+
+            $katalog->save();
+
+            return redirect()->route('admin.data-katalog')->with('success', 'Katalog berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-katalog')->with('error', 'Gagal memperbarui katalog: ' . $e->getMessage());
+        }
+    }
+
+    public function toggleKatalog($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $katalog = DataKatalog::findOrFail($id);
+            $katalog->is_active = !$katalog->is_active;
+            $katalog->save();
+
+            return redirect()->route('admin.data-katalog')->with('success', 'Status tampilan katalog berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-katalog')->with('error', 'Gagal memperbarui status katalog: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteKatalog($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $katalog = DataKatalog::findOrFail($id);
+            if ($katalog->image && Storage::disk('public')->exists($katalog->image)) {
+                Storage::disk('public')->delete($katalog->image);
+            }
+            $katalog->delete();
+
+            return redirect()->route('admin.data-katalog')->with('success', 'Katalog berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-katalog')->with('error', 'Gagal menghapus katalog: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA KOSTUM ====================
+
+    public function dataKostum(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $search = $request->input('search', '');
+        $category = $request->input('kategori', '');
+        $filter_jenis_kelamin = $request->input('jenis_kelamin', '');
+        $filter_ukuran = $request->input('ukuran', '');
+        $sort = $request->input('sort', 'id_asc');
+
+        $kostumQuery = DataKostum::query();
+
+        if ($search !== '') {
+            $kostumQuery->where(function ($q) use ($search) {
+                $q->where('nama_kostum', 'like', "%{$search}%")
+                                    ->orWhere('katalog', 'like', "%{$search}%")
+                                    ->orWhere('kategori', 'like', "%{$search}%")
+                  ->orWhere('brand', 'like', "%{$search}%");
+            });
+        }
+
+        if ($category !== '') {
+            $kostumQuery->where('kategori', $category);
+        }
+
+        $kostumQuery->where('jenis_kelamin', '<>', 'Unisex');
+
+        if ($filter_jenis_kelamin !== '') {
+            $kostumQuery->where('jenis_kelamin', $filter_jenis_kelamin);
+        }
+
+        if ($filter_ukuran !== '') {
+            $kostumQuery->where('ukuran_kostum', 'like', "%{$filter_ukuran}%");
+        }
+
+        // Handle sorting
+        switch ($sort) {
+            case 'nama_asc':
+                $kostumQuery->orderBy('nama_kostum', 'asc');
+                break;
+            case 'nama_desc':
+                $kostumQuery->orderBy('nama_kostum', 'desc');
+                break;
+            case 'harga_asc':
+                $kostumQuery->orderBy('harga_sewa', 'asc');
+                break;
+            case 'harga_desc':
+                $kostumQuery->orderBy('harga_sewa', 'desc');
+                break;
+            default:
+                $kostumQuery->orderBy('id_kostum', 'desc');
+        }
+
+        $kostum = $kostumQuery->orderBy('judul')->orderBy('nama_kostum')->paginate(20);
+        $katalogOptions = DataKatalog::query()
+            ->select(['name', 'kategori'])
+            ->whereNotNull('name')
+            ->where('name', '<>', '')
+            ->whereNotNull('kategori')
+            ->where('kategori', '<>', '')
+            ->orderBy('kategori')
+            ->orderBy('name')
+            ->get();
+        $katalog = $katalogOptions->pluck('name')->unique()->values();
+        $kategori = $katalogOptions->pluck('kategori')->unique()->values();
+
+        // Extract all available sizes from kostums for filter
+        $ukuran = [];
+        foreach (DataKostum::pluck('ukuran_kostum') as $sizeStr) {
+            if (!is_string($sizeStr)) continue;
+            $parts = preg_split('/[,;&]/', $sizeStr);
+            foreach ($parts as $p) {
+                $clean = trim($p);
+                if ($clean !== '') {
+                    $ukuran[] = $clean;
+                }
+            }
+        }
+        $ukuran = array_values(array_unique($ukuran));
+        $orderMap = ['XS' => 1, 'S' => 2, 'M' => 3, 'L' => 4, 'XL' => 5, 'XXL' => 6, 'XXXL' => 7];
+        usort($ukuran, function ($a, $b) use ($orderMap) {
+            $aKey = strtoupper($a);
+            $bKey = strtoupper($b);
+            $aRank = $orderMap[$aKey] ?? 999;
+            $bRank = $orderMap[$bKey] ?? 999;
+            if ($aRank === $bRank) {
+                return strcasecmp($aKey, $bKey);
+            }
+            return $aRank <=> $bRank;
+        });
+
+        return view('admin.data-kostum', [
+            'kostum' => $kostum,
+            'katalogOptions' => $katalogOptions,
+            'katalog' => $katalog,
+            'kategori' => $kategori,
+            'ukuran' => $ukuran,
+            'search' => $search,
+            'filter_kategori' => $category,
+            'filter_jenis_kelamin' => $filter_jenis_kelamin,
+            'filter_ukuran' => $filter_ukuran,
+            'sort' => $sort,
+        ]);
+    }
+
+    public function storeKostum(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $rawUkuran = $request->input('ukuran_kostum');
+        if (is_array($rawUkuran)) {
+            $cleanSizes = array_filter(array_map('trim', $rawUkuran), function ($size) {
+                return $size !== '';
+            });
+            $request->merge(['ukuran_kostum' => implode(', ', $cleanSizes)]);
+        }
+
+        $imageFields = ['gambar1', 'gambar2', 'gambar3', 'gambar4', 'gambar5'];
+        $rules = [
+            'katalog' => 'required|string|max:255|exists:data_katalog,name',
+            'kategori' => 'required|string|max:255|exists:data_katalog,kategori',
+            'nama_kostum' => 'required|string|max:255',
+            'judul' => 'nullable|string|max:255',
+            'harga_sewa' => 'required|numeric|min:0',
+            'durasi_penyewaan' => 'nullable|string|max:100',
+            'ukuran_kostum' => 'nullable|string|max:255',
+            'jenis_kelamin' => 'nullable|in:Pria,Wanita',
+            'include' => 'nullable|string|max:1000',
+            'exclude' => 'nullable|string|max:1000',
+            'harga_exclude' => 'nullable|numeric|min:0|max:99999999.99',
+            'brand' => 'nullable|string|max:255',
+        ];
+
+        foreach ($imageFields as $field) {
+            $rules[$field] = $field === 'gambar1'
+                ? 'required|image|mimes:jpg,jpeg,png,webp,gif|max:4096'
+                : 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096';
+        }
+
+        $validated = $request->validate($rules);
+
+        if (!DataKatalog::where('name', $validated['katalog'])
+            ->where('kategori', $validated['kategori'])
+            ->exists()) {
+            return back()
+                ->withErrors(['katalog' => 'Katalog tidak sesuai dengan kategori yang dipilih.'])
+                ->withInput();
+        }
+
+        try {
+            foreach ($imageFields as $field) {
+                if ($request->hasFile($field)) {
+                    $validated[$field] = $request->file($field)->store('kostum_images', 'public');
+                }
+            }
+
+            DataKostum::create($validated);
+            return redirect()->route('admin.data-kostum')->with('success', 'Kostum berhasil ditambahkan.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-kostum')->with('error', 'Gagal menambahkan kostum: ' . $e->getMessage());
+        }
+    }
+
+    public function updateKostum(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $rawUkuran = $request->input('ukuran_kostum');
+        if (is_array($rawUkuran)) {
+            $cleanSizes = array_filter(array_map('trim', $rawUkuran), function ($size) {
+                return $size !== '';
+            });
+            $request->merge(['ukuran_kostum' => implode(', ', $cleanSizes)]);
+        }
+
+        $imageFields = ['gambar1', 'gambar2', 'gambar3', 'gambar4', 'gambar5'];
+        $validated = $request->validate([
+            'id_kostum' => 'required|integer|exists:data_kostum,id_kostum',
+            'katalog' => 'required|string|max:255|exists:data_katalog,name',
+            'kategori' => 'required|string|max:255|exists:data_katalog,kategori',
+            'nama_kostum' => 'required|string|max:255',
+            'judul' => 'nullable|string|max:255',
+            'harga_sewa' => 'required|numeric|min:0',
+            'durasi_penyewaan' => 'nullable|string|max:100',
+            'ukuran_kostum' => 'nullable|string|max:255',
+            'jenis_kelamin' => 'nullable|in:Pria,Wanita',
+            'include' => 'nullable|string|max:1000',
+            'exclude' => 'nullable|string|max:1000',
+            'harga_exclude' => 'nullable|numeric|min:0|max:99999999.99',
+            'brand' => 'nullable|string|max:255',
+            'gambar1' => 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096',
+            'gambar2' => 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096',
+            'gambar3' => 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096',
+            'gambar4' => 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096',
+            'gambar5' => 'nullable|image|mimes:jpg,jpeg,png,webp,gif|max:4096',
+        ]);
+
+        if (!DataKatalog::where('name', $validated['katalog'])
+            ->where('kategori', $validated['kategori'])
+            ->exists()) {
+            return back()
+                ->withErrors(['katalog' => 'Katalog tidak sesuai dengan kategori yang dipilih.'])
+                ->withInput();
+        }
+
+        try {
+            $kostum = DataKostum::findOrFail($validated['id_kostum']);
+
+            foreach ($imageFields as $field) {
+                if ($request->hasFile($field)) {
+                    $oldPath = $kostum->{$field};
+                    if ($oldPath && Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
+
+                    $validated[$field] = $request->file($field)->store('kostum_images', 'public');
+                } elseif ($request->boolean('remove_' . $field)) {
+                    $oldPath = $kostum->{$field};
+                    if ($oldPath && Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
+                    $validated[$field] = null;
+                } elseif (!array_key_exists($field, $validated) && $kostum->{$field}) {
+                    $validated[$field] = $kostum->{$field};
+                }
+            }
+
+            $kostum->update($validated);
+
+            return redirect()->route('admin.data-kostum')->with('success', 'Kostum berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-kostum')->with('error', 'Gagal memperbarui kostum: ' . $e->getMessage());
+        }
+    }
+
+    public function toggleKostum(Request $request, $id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $kostum = DataKostum::findOrFail($id);
+            $status = $request->input('status');
+
+            if (!in_array($status, ['active', 'maintenance', 'exclude'], true)) {
+                return redirect()->route('admin.data-kostum')->with('error', 'Status kostum tidak valid.');
+            }
+
+            if ($status === 'active') {
+                $kostum->is_active = !$kostum->is_active;
+            } elseif ($status === 'maintenance') {
+                $kostum->is_maintenance = !$kostum->is_maintenance;
+            } else {
+                if (!filled($kostum->exclude) || is_null($kostum->harga_exclude)) {
+                    return redirect()->route('admin.data-kostum')->with('error', 'Toggle exclude hanya tersedia untuk kostum dengan data exclude dan harga exclude.');
+                }
+                $kostum->is_exclude_active = !$kostum->is_exclude_active;
+            }
+
+            $kostum->save();
+
+            return redirect()->route('admin.data-kostum')->with('success', 'Status kostum berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-kostum')->with('error', 'Gagal memperbarui status kostum: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteKostum($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            DataKostum::findOrFail($id)->delete();
+            return redirect()->route('admin.data-kostum')->with('success', 'Kostum berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-kostum')->with('error', 'Gagal menghapus kostum: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteKostumImage($imageId)
+    {
+        if (!session('admin_logged_in')) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        try {
+            // This is a placeholder - actual implementation depends on image storage structure
+            return response()->json(['success' => true, 'message' => 'Gambar berhasil dihapus.']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Gagal menghapus gambar: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // ==================== PROFILE CONTACT ====================
+
+    public function profileContact()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $profile = ProfileContact::first() ?? new ProfileContact();
+
+        return view('admin.profile', [
+            'profile' => $profile,
+        ]);
+    }
+
+    public function updateProfileContact(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'title' => 'nullable|string|max:255',
+            'vision' => 'nullable|string|max:5000',
+            'address' => 'nullable|string|max:1000',
+            'phone' => 'nullable|string|max:20',
+            'email' => 'required|email|max:255',
+            'instagram' => 'nullable|string|max:100',
+            'nomor_ewallet' => 'nullable|string|max:100',
+            'nomor_bank' => 'nullable|string|max:100',
+            'origin_province_id' => 'nullable|numeric',
+            'origin_city_id' => 'nullable|numeric',
+            'origin_postal_code' => 'nullable|string|max:20',
+            'photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'qris' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'remove_photo' => 'nullable|in:0,1',
+            'remove_qris' => 'nullable|in:0,1',
+        ]);
+
+        try {
+            $profile = ProfileContact::first();
+            if (!$profile) {
+                $profile = new ProfileContact();
+            }
+
+            // Update text fields
+            $profile->name = $validated['name'];
+            $profile->title = $validated['title'] ?? $profile->title;
+            $profile->vision = $validated['vision'] ?? $profile->vision;
+            $profile->address = $validated['address'] ?? $profile->address;
+            $profile->phone = $validated['phone'] ?? $profile->phone;
+            $profile->email = $validated['email'];
+            $profile->instagram = $validated['instagram'] ?? $profile->instagram;
+            $profile->nomor_ewallet = $validated['nomor_ewallet'] ?? $profile->nomor_ewallet;
+            $profile->nomor_bank = $validated['nomor_bank'] ?? $profile->nomor_bank;
+            $profile->origin_province_id = $validated['origin_province_id'] ?? $profile->origin_province_id;
+            $profile->origin_city_id = $validated['origin_city_id'] ?? $profile->origin_city_id;
+            $profile->origin_postal_code = $validated['origin_postal_code'] ?? $profile->origin_postal_code;
+
+            // Handle photo upload/deletion
+            if ($request->input('remove_photo') == '1') {
+                // Delete photo if requested
+                if ($profile->photo && Storage::disk('public')->exists($profile->photo)) {
+                    Storage::disk('public')->delete($profile->photo);
+                }
+                $profile->photo = '';
+            } elseif ($request->hasFile('photo')) {
+                // Upload new photo
+                if ($profile->photo && Storage::disk('public')->exists($profile->photo)) {
+                    Storage::disk('public')->delete($profile->photo);
+                }
+                $profile->photo = $request->file('photo')->store('profile_contact', 'public');
+            }
+
+            // Handle QRIS upload/deletion
+            if ($request->input('remove_qris') == '1') {
+                // Delete QRIS if requested
+                if ($profile->qris && Storage::disk('public')->exists($profile->qris)) {
+                    Storage::disk('public')->delete($profile->qris);
+                }
+                $profile->qris = '';
+            } elseif ($request->hasFile('qris')) {
+                // Upload new QRIS
+                if ($profile->qris && Storage::disk('public')->exists($profile->qris)) {
+                    Storage::disk('public')->delete($profile->qris);
+                }
+                $profile->qris = $request->file('qris')->store('profile_contact', 'public');
+            }
+
+            $profile->save();
+
+            // Flush session input agar form menampilkan data fresh dari database
+            $request->session()->forget('_old_input');
+
+            return redirect()->route('admin.profile.settings')->with('success', 'Profil berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.profile.settings')->with('error', 'Gagal memperbarui profil: ' . $e->getMessage());
+        }
+    }
+
+    public function updateProfileContactPhoto(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $request->validate([
+            'photo' => 'required|image|mimes:jpg,jpeg,png,webp|max:2048',
+        ]);
+
+        try {
+            $profile = ProfileContact::first();
+            if (!$profile) {
+                $profile = new ProfileContact();
+            }
+
+            if ($request->hasFile('photo')) {
+                if ($profile->photo && Storage::disk('public')->exists($profile->photo)) {
+                    Storage::disk('public')->delete($profile->photo);
+                }
+                $profile->photo = $request->file('photo')->store('profile_contact', 'public');
+                $profile->save();
+            }
+
+            return redirect()->route('admin.profile.settings')->with('success', 'Foto profil berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.profile.settings')->with('error', 'Gagal memperbarui foto: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteProfileContactPhoto()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $profile = ProfileContact::first();
+            if ($profile && $profile->photo && Storage::disk('public')->exists($profile->photo)) {
+                Storage::disk('public')->delete($profile->photo);
+                $profile->photo = '';
+                $profile->save();
+            }
+
+            return redirect()->route('admin.profile.settings')->with('success', 'Foto profil berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.profile.settings')->with('error', 'Gagal menghapus foto: ' . $e->getMessage());
+        }
+    }
+
+    public function updatePaymentQris(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $request->validate([
+            'qris' => 'required|image|mimes:jpg,jpeg,png,webp|max:2048',
+        ]);
+
+        try {
+            $profile = ProfileContact::first();
+            if (!$profile) {
+                $profile = new ProfileContact();
+            }
+
+            if ($request->hasFile('qris')) {
+                if ($profile->qris && Storage::disk('public')->exists($profile->qris)) {
+                    Storage::disk('public')->delete($profile->qris);
+                }
+                $profile->qris = $request->file('qris')->store('profile_contact', 'public');
+                $profile->save();
+            }
+
+            return redirect()->route('admin.profile.settings')->with('success', 'QRIS berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.profile.settings')->with('error', 'Gagal memperbarui QRIS: ' . $e->getMessage());
+        }
+    }
+
+    public function deletePaymentQris()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $profile = ProfileContact::first();
+            if ($profile && $profile->qris && Storage::disk('public')->exists($profile->qris)) {
+                Storage::disk('public')->delete($profile->qris);
+                $profile->qris = '';
+                $profile->save();
+            }
+
+            return redirect()->route('admin.profile.settings')->with('success', 'QRIS berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.profile.settings')->with('error', 'Gagal menghapus QRIS: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA ATURAN ====================
+
+    public function dataAturan()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $aturan = Aturan::orderBy('created_at', 'desc')->get();
+
+        return view('admin.data-aturan', [
+            'aturan' => $aturan,
+        ]);
+    }
+
+    public function storeAturan(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'syarat_ketentuan' => 'required|string|max:10000',
+            'larangan_dan_denda' => 'required|string|max:10000',
+        ]);
+
+        try {
+            Aturan::create($validated);
+            return redirect()->route('admin.data-aturan')->with('success', 'Aturan berhasil ditambahkan.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-aturan')->with('error', 'Gagal menambahkan aturan: ' . $e->getMessage());
+        }
+    }
+
+    public function updateAturan(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:aturan,id',
+            'syarat_ketentuan' => 'required|string|max:10000',
+            'larangan_dan_denda' => 'required|string|max:10000',
+        ]);
+
+        try {
+            $aturan = Aturan::findOrFail($validated['id']);
+            $aturan->update([
+                'syarat_ketentuan' => $validated['syarat_ketentuan'],
+                'larangan_dan_denda' => $validated['larangan_dan_denda'],
+            ]);
+
+            return redirect()->route('admin.data-aturan')->with('success', 'Aturan berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-aturan')->with('error', 'Gagal memperbarui aturan: ' . $e->getMessage());
+        }
+    }
+
+    public function deleteAturan($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            Aturan::findOrFail($id)->delete();
+            return redirect()->route('admin.data-aturan')->with('success', 'Aturan berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-aturan')->with('error', 'Gagal menghapus aturan: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA PESANAN ====================
+
+    public function dataPesanan(Request $request)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $status = $request->input('status', '');
+        $search = $request->input('search', '');
+
+        $pesananQuery = Formulir::query()
+            ->leftJoin('users', function ($join) {
+                $join->whereRaw(
+                    'CONVERT(formulir.email USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(users.email USING utf8mb4) COLLATE utf8mb4_unicode_ci'
+                );
+            })
+            ->select([
+                'formulir.*',
+                DB::raw('COALESCE(users.username, formulir.nama) as nama'),
+            ]);
+
+        if ($status !== '') {
+            $pesananQuery->where('status', $status);
+        }
+
+        if ($search !== '') {
+            $pesananQuery->where(function ($q) use ($search) {
+                                $q->where('users.username', 'like', "%{$search}%")
+                                    ->orWhere('formulir.nama', 'like', "%{$search}%")
+                                    ->orWhere('formulir.email', 'like', "%{$search}%")
+                                    ->orWhere('formulir.nama_kostum', 'like', "%{$search}%");
+            });
+        }
+
+        $pesanan = $pesananQuery->orderBy('created_at', 'desc')->paginate(20);
+
+        $statusOptions = ['proses', 'revisi', 'diterima', 'selesai', 'dibatalkan'];
+        $pendingCount = Formulir::where('status', 'proses')->count();
+
+        return view('admin.data-pesanan', [
+            'pesanan' => $pesanan,
+            'statusOptions' => $statusOptions,
+            'currentStatus' => $status,
+            'search' => $search,
+            'pendingCount' => $pendingCount,
+        ]);
+    }
+
+    public function updatePesananStatus(Request $request, $id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $validated = $request->validate([
+            'status' => 'required|string|in:proses,revisi,diterima,selesai,dibatalkan',
+            'keterangan' => 'nullable|string|max:255',
+        ]);
+
+        try {
+            $pesanan = Formulir::findOrFail($id);
+            $pesanan->status = $validated['status'];
+            if (array_key_exists('keterangan', $validated)) {
+                $pesanan->keterangan = $validated['keterangan'];
+            }
+            $pesanan->save();
+
+            return redirect()->route('admin.data-pesanan')->with('success', 'Status pesanan berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pesanan')->with('error', 'Gagal memperbarui status: ' . $e->getMessage());
+        }
+    }
+
+    public function deletePesanan($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $pesanan = Formulir::findOrFail($id);
+
+            if (Schema::hasTable('pengembalian')
+                && Schema::hasColumn('pengembalian', 'formulir_id')
+                && Schema::hasColumn('pengembalian', 'snapshot_nama')) {
+                Pengembalian::where('formulir_id', $pesanan->id)->update([
+                    'snapshot_nama' => $pesanan->nama,
+                    'snapshot_email' => $pesanan->email,
+                    'snapshot_nama_kostum' => $pesanan->nama_kostum,
+                ]);
+            }
+
+            $pesanan->delete();
+            return redirect()->route('admin.data-pesanan')->with('success', 'Pesanan berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pesanan')->with('error', 'Gagal menghapus pesanan: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA PENGEMBALIAN ====================
+
+    public function dataPengembalian()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        // Ambil semua pengembalian dan eager-load formulir jika ada, to avoid relation not loaded
+        $pengembalianRaw = Pengembalian::with('formulir')->orderBy('created_at', 'desc')->get();
+
+        // Ambil semua formulir sekali untuk per-row proximity matching (non-destructive)
+        $formulirAll = Formulir::orderByDesc('created_at')->get();
+        
+        $usernamesByEmail = User::query()
+            ->whereNotNull('email')
+            ->whereNotNull('username')
+            ->get(['email', 'username'])
+            ->keyBy(fn ($user) => strtolower(trim((string) $user->email)));
+
+        // Build data pengembalian dengan informasi formulir
+        $mapped = $pengembalianRaw->map(function($pengembalian) use ($formulirAll, $usernamesByEmail) {
+            // Attach a conservative formulir match per-row (eager-loaded when available).
+            if ($pengembalian->relationLoaded('formulir') && $pengembalian->formulir) {
+                $formulir = $pengembalian->formulir;
+            } else {
+                $formulir = null;
+                try {
+                    if ($formulirAll->isNotEmpty() && $pengembalian->created_at) {
+                        $closest = $formulirAll->sortBy(function ($f) use ($pengembalian) {
+                            return abs(optional($f->created_at)->getTimestamp() - optional($pengembalian->created_at)->getTimestamp());
+                        })->first();
+                        if ($closest) {
+                            $diff = abs(optional($closest->created_at)->getTimestamp() - optional($pengembalian->created_at)->getTimestamp());
+                            if ($diff <= 604800) { // 7 days
+                                $formulir = $closest;
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    $formulir = null;
+                }
+            }
+
+            if ($formulir) {
+                $username = $usernamesByEmail->get(strtolower(trim((string) $formulir->email)))?->username;
+                $pengembalian->display_nama = $username ?: ($formulir->nama ?? '-');
+                $pengembalian->display_email = $formulir->email;
+                $pengembalian->display_kostum = $formulir->nama_kostum ?? '-';
+                $pengembalian->formulir = $formulir;
+            } else {
+                $username = $usernamesByEmail->get(strtolower(trim((string) $pengembalian->snapshot_email)))?->username;
+                $pengembalian->display_nama = $username ?: ($pengembalian->snapshot_nama ?? '-');
+                $pengembalian->display_email = $pengembalian->snapshot_email;
+                $pengembalian->display_kostum = $pengembalian->snapshot_nama_kostum ?? '-';
+            }
+
+            return $pengembalian;
+        });
+
+        $pengembalianList = $mapped->sortByDesc('created_at')->values();
+
+        $pendingCount = Pengembalian::where('status', 'proses')->count();
+
+        return view('admin.data-pengembalian', [
+            'pengembalianList' => $pengembalianList,
+            'pendingCount' => $pendingCount,
+        ]);
+    }
+
+    public function verifikasiPengembalian(Request $request, $id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+        $validated = $request->validate([
+            'aksi' => 'required|in:revisi,setujui',
+            'catatan_admin' => 'nullable|string|max:255',
+        ]);
+
+        try {
+            $pengembalian = Pengembalian::findOrFail($id);
+
+            // Map form action to pengembalian status
+            $aksi = $validated['aksi'];
+            $newStatus = $aksi === 'setujui' ? 'diterima' : 'ditolak';
+
+            $pengembalian->status = $newStatus;
+            $pengembalian->catatan_admin = trim((string) ($validated['catatan_admin'] ?? '')) ?: null;
+            $pengembalian->save();
+
+            // If accepted, mark related formulir as selesai (if linked)
+            if ($newStatus === 'diterima' && $pengembalian->formulir) {
+                try {
+                    $pengembalian->formulir->status = 'selesai';
+                    $pengembalian->formulir->save();
+                } catch (\Exception $e) {
+                    // ignore formulir update failures
+                }
+            }
+
+            return redirect()->route('admin.data-pengembalian')->with('success', 'Pengembalian berhasil diverifikasi.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pengembalian')->with('error', 'Gagal memverifikasi: ' . $e->getMessage());
+        }
+    }
+
+    public function deletePengembalian($id)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        try {
+            $pengembalian = Pengembalian::findOrFail($id);
+
+            foreach (['gambar1', 'gambar2', 'gambar3'] as $field) {
+                if ($pengembalian->$field) {
+                    Storage::disk('public')->delete($pengembalian->$field);
+                }
+            }
+
+            $pengembalian->delete();
+
+            return redirect()->route('admin.data-pengembalian')->with('success', 'Data pengembalian berhasil dihapus.');
+        } catch (\Exception $e) {
+            return redirect()->route('admin.data-pengembalian')->with('error', 'Gagal menghapus data pengembalian: ' . $e->getMessage());
+        }
+    }
+
+    // ==================== DATA DENDA ====================
+
+    public function dataDenda()
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        $dendas = Denda::orderBy('created_at', 'desc')->get();
+
+        // Build the Denda selector from registered users and hide costume names
+        // while the user's latest return request is still process or rejected.
+        $formulir = [];
+        $blockedDendaUsers = [];
+        try {
+            $usersByEmail = User::query()
+                ->whereNotNull('username')
+                ->where('username', '<>', '')
+                ->get(['username', 'email'])
+                ->filter(fn ($user) => filled($user->email))
+                ->keyBy(fn ($user) => strtolower(trim((string) $user->email)));
+
+            $ordersByEmail = Formulir::query()
+                ->whereNotNull('email')
+                ->orderByDesc('created_at')
+                ->get(['id', 'email', 'nama_kostum'])
+                ->groupBy(fn ($order) => strtolower(trim((string) $order->email)));
+
+            foreach ($usersByEmail as $email => $user) {
+                $kostum = '';
+                $userOrders = $ordersByEmail->get($email, collect());
+                $latestOrder = $userOrders->first();
+
+                foreach ($userOrders as $order) {
+                    $returnStatus = strtolower((string) Pengembalian::where('formulir_id', $order->id)
+                        ->latest('created_at')
+                        ->value('status'));
+                    if (in_array($returnStatus, ['proses', 'ditolak'], true)) {
+                        $blockedDendaUsers[strtolower(trim((string) $user->username))] = true;
+                        $kostum = '';
+                        break;
+                    }
+                }
+
+                if ($latestOrder && !empty($latestOrder->nama_kostum) && !isset($blockedDendaUsers[strtolower(trim((string) $user->username))])) {
+                    $kostum = $latestOrder->nama_kostum;
+                }
+
+                $formulir[] = (object) [
+                    'username' => $user->username,
+                    'nama_kostum' => $kostum,
+                ];
+            }
+
+            usort($formulir, fn ($left, $right) => strcasecmp($left->username, $right->username));
+        } catch (\Exception $e) {
+            // fail silently; view will handle empty list
+            $formulir = [];
+        }
+
+        return view('admin.data-denda', [
+            'dendas' => $dendas,
+            'formulir' => $formulir,
+            'blockedDendaUsers' => $blockedDendaUsers,
+        ]);
+    }
+
+    // ==================== DATA TANGGAL ====================
+
+    public function updateDataTanggal(Request $request, $sheetCode)
+    {
+        if (!session('admin_logged_in')) {
+            return redirect()->route('admin.login');
+        }
+
+        // This method is for sheet-based updates, which has been replaced by month-grid
+        // Keeping as placeholder for backward compatibility
+        return redirect()->route('admin.data-tanggal')->with('info', 'Format pemesanan telah diperbarui ke tampilan bulanan.');
+    }
+
+    // ==================== LOGOUT ====================
+
+    public function logout()
+    {
+        session()->flush();
+        return redirect()->route('admin.login')->with('success', 'Anda telah logout.');
+    }
+}
