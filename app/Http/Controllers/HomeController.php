@@ -24,6 +24,7 @@ class HomeController extends Controller
     {
         $search = trim((string) $request->query('search', ''));
         $sort = $request->query('sort', 'name_asc');
+        $catalogCategory = trim((string) $request->query('category', ''));
         $katalogQuery = DataKatalog::where('is_active', true);
 
         if ($search !== '') {
@@ -33,8 +34,18 @@ class HomeController extends Controller
             });
         }
 
+        if ($catalogCategory !== '') {
+            $katalogQuery->where('kategori', $catalogCategory);
+        }
+
         $katalogQuery->orderBy('name', $sort === 'name_desc' ? 'desc' : 'asc');
         $katalog = $katalogQuery->get();
+        $catalogCategories = DataKatalog::where('is_active', true)
+            ->whereNotNull('kategori')
+            ->where('kategori', '<>', '')
+            ->distinct()
+            ->orderBy('kategori')
+            ->pluck('kategori');
         $profile = ProfileContact::first();
 
         return view('home', [
@@ -42,6 +53,8 @@ class HomeController extends Controller
             'profile' => $profile,
             'catalogSearch' => $search,
             'catalogSort' => $sort,
+            'catalogCategory' => $catalogCategory,
+            'catalogCategories' => $catalogCategories,
         ]);
     }
 

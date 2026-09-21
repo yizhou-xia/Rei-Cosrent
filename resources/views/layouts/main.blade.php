@@ -1300,7 +1300,6 @@
             <ul class="navbar-nav nav-center d-none d-lg-flex align-items-center">
                 <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#kategori' : route('home') . '#kategori' }}">Katalog</a></li>
                 <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#profil' : route('home') . '#profil' }}">Profil</a></li>
-                <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#kontak' : route('home') . '#kontak' }}">Informasi</a></li>
                 <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ route('peraturan') }}">Aturan</a></li>
                 <li class="nav-item ms-lg-2">
                     <a class="nav-link fw-semibold d-flex align-items-center gap-2 ak-nav-btn" href="{{ route('tanggal.pemesanan') }}">
@@ -1347,7 +1346,6 @@
                 <ul class="navbar-nav nav-center mx-auto mb-2 mb-lg-0 align-items-center d-lg-none">
                     <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#kategori' : route('home') . '#kategori' }}">Katalog</a></li>
                     <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#profil' : route('home') . '#profil' }}">Profil</a></li>
-                    <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ request()->routeIs('home') ? '#kontak' : route('home') . '#kontak' }}">Informasi</a></li>
                     <li class="nav-item"><a class="nav-link fw-semibold ak-nav-btn" href="{{ route('peraturan') }}">Aturan</a></li>
                     <li class="nav-item ms-lg-2">
                         <a class="nav-link fw-semibold d-flex align-items-center gap-2 ak-nav-btn" href="{{ route('tanggal.pemesanan') }}">
