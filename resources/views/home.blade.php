@@ -40,7 +40,7 @@
         max-height: 100%;
         object-fit: cover;
         object-position: center;
-        filter: blur(5px) saturate(1.0) brightness(1.0);
+        filter: blur(1px);
         transform: scale(1.035);
         position: relative;
         z-index: 1;
@@ -215,9 +215,9 @@
     .ak-catalog .alert * { color: var(--ak-secondary-text) !important; }
 
     /* Profile card style */
-    .ak-profile { background: transparent; }
+    .ak-profile { background: transparent; scroll-margin-top: calc(var(--nav-height, 72px) + 18px); }
     .ak-profile .profile-card { border-radius:18px; padding:1.25rem; box-shadow:0 24px 50px -24px rgba(16,24,40,0.2); background: var(--ak-card-bg); border: 1px solid var(--ak-card-border); color: var(--ak-secondary-text); }
-    .ak-profile .profile-identity-card { height: 100%; padding: 1.5rem 1rem; border: 1px solid var(--ak-card-border); border-radius: 16px; background: color-mix(in srgb, var(--ak-card-bg) 88%, #0b1220 12%); box-shadow: 0 12px 28px -20px rgba(16,24,40,0.45); }
+    .ak-profile .profile-identity-card { height: 100%; min-width: 0; padding: 1.5rem 1rem; border: 1px solid var(--ak-card-border); border-radius: 16px; background: color-mix(in srgb, var(--ak-card-bg) 88%, #0b1220 12%); box-shadow: 0 12px 28px -20px rgba(16,24,40,0.45); }
     .ak-profile .profile-card .text-muted,
     .ak-profile .profile-card .card-title,
     .ak-profile .profile-card h4,
@@ -230,7 +230,7 @@
         color: var(--ak-secondary-text) !important;
     }
     .ak-profile .text-primary { color: var(--ak-secondary-text) !important; }
-    .ak-profile img.rounded-circle { width:130px; height:130px; object-fit:cover; border-radius:999px; }
+    .ak-profile img.rounded-circle { width:156px; height:156px; max-width:100%; object-fit:cover; border-radius:999px; }
     .ak-profile .profile-about-section { padding-bottom: 1.25rem; border-bottom: 1px solid var(--ak-card-border); }
     .ak-profile .profile-contact { margin-top: 1.25rem; }
     .ak-profile .profile-contact-list { display: flex; flex-direction: column; gap: .50rem; }
@@ -238,6 +238,32 @@
     .ak-profile .profile-contact-icon { width: 2.25rem; height: 2.25rem; flex: 0 0 2.25rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(37, 99, 235, .12); color: var(--brand-blue); font-size: 1.05rem; }
     .ak-profile .profile-contact-content { min-width: 0; }
     .ak-profile .profile-email-button { margin-top: .5rem; }
+    .ak-profile .profile-identity-address { margin-top: .65rem; padding-top: .65rem; border-top: 1px solid var(--ak-card-border); font-size: .85rem; overflow-wrap: anywhere; }
+
+    @media (min-width: 992px) {
+        .ak-profile .profile-card { padding: .85rem !important; }
+        .ak-profile .profile-card > .row { --bs-gutter-x: 1.25rem; --bs-gutter-y: 1rem; }
+        .ak-profile .profile-card > .row > .col-md-4 { padding: .5rem !important; }
+        .ak-profile .profile-identity-card { padding: 1rem .75rem; }
+        .ak-profile img.rounded-circle { width: 132px; height: 132px; margin-bottom: .65rem !important; }
+        .ak-profile .profile-identity-card > .mb-3 { margin-bottom: .65rem !important; }
+        .ak-profile .profile-identity-card > .mb-3 .bi { font-size: 132px !important; }
+        .ak-profile .profile-card .card-body { padding: .75rem; }
+        .ak-profile .profile-about-section { padding-bottom: .85rem; }
+        .ak-profile .profile-contact { margin-top: .85rem; }
+    }
+
+    @media (max-width: 991.98px) {
+        .ak-profile .profile-card { padding: .85rem !important; }
+        .ak-profile .profile-card > .row { --bs-gutter-y: 1rem; }
+        .ak-profile .profile-identity-card { height: auto; min-height: 0; padding: .85rem .75rem; flex-direction: row !important; justify-content: flex-start !important; gap: .85rem; text-align: left; }
+        .ak-profile img.rounded-circle { width: 88px; height: 88px; margin-bottom: 0 !important; flex: 0 0 88px; }
+        .ak-profile .profile-identity-card > .mb-3 { margin-bottom: 0 !important; flex: 0 0 auto; }
+        .ak-profile .profile-identity-card > .mb-3 .bi { font-size: 88px !important; }
+        .ak-profile .profile-identity-info { min-width: 0; text-align: left; }
+        .ak-profile .profile-identity-card h4 { font-size: 1rem; }
+        .ak-profile .profile-identity-card p { font-size: .85rem; }
+    }
 
     /* Contact card */
     .ak-contact .card { border-radius:18px; box-shadow: 0 20px 40px -20px rgba(16,24,40,0.2); background: var(--ak-card-bg); border: 1px solid var(--ak-card-border); color: var(--ak-secondary-text); }
@@ -410,8 +436,14 @@
                                     @else
                                         <div class="mb-3"><i class="bi bi-person-circle text-primary" style="font-size: 150px;"></i></div>
                                     @endif
-                                    <h4 class="fw-bold profile-name mb-1">{{ optional($profile)->name ?: 'Pengurus Rei Cosrent' }}</h4>
-                                    <p class="text-muted mb-0">{{ optional($profile)->title ?: 'Pengurus' }}</p>
+                                    <div class="profile-identity-info">
+                                        <h4 class="fw-bold profile-name mb-1">{{ optional($profile)->name ?: 'Pengurus Rei Cosrent' }}</h4>
+                                        <p class="text-muted mb-0">{{ optional($profile)->title ?: 'Pengurus' }}</p>
+                                        <div class="profile-identity-address">
+                                            <small class="d-block">Alamat</small>
+                                            <strong>{{ $profileAddress }}</strong>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="col-md-8">
@@ -423,7 +455,6 @@
                                     <div class="profile-contact">
                                         <h5 class="card-title fw-bold profile-heading mb-3">Kontak Admin</h5>
                                         <div class="profile-contact-list">
-                                            <div class="profile-contact-item"><i class="bi bi-geo-alt-fill profile-contact-icon" aria-hidden="true"></i><div class="profile-contact-content"><small class="contact-label d-block">Alamat</small><p class="contact-value fw-bold mb-0">{{ $profileAddress }}</p></div></div>
                                             <div class="profile-contact-item"><i class="bi bi-instagram profile-contact-icon" aria-hidden="true"></i><div class="profile-contact-content"><small class="contact-label d-block">Instagram</small><p class="contact-value fw-bold mb-1">{{ $instagramHandle !== '' ? '@' . $instagramHandle : '-' }}</p>@if($instagramUrl)<a href="{{ $instagramUrl }}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm rounded-pill"><i class="bi bi-box-arrow-up-right me-1" aria-hidden="true"></i> Buka Instagram</a>@endif</div></div>
                                             <div class="profile-contact-item"><i class="bi bi-envelope-fill profile-contact-icon" aria-hidden="true"></i><div class="profile-contact-content"><small class="contact-label d-block">Email Resmi</small><p class="contact-value fw-bold mb-0 text-break">{{ optional($profile)->email ?: '-' }}</p>@if(optional($profile)->email)<a href="https://mail.google.com/mail/?view=cm&amp;fs=1&amp;to={{ urlencode(optional($profile)->email) }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm rounded-pill profile-email-button"><i class="bi bi-envelope me-1" aria-hidden="true"></i> Kirim Email</a>@endif</div></div>
                                         </div>
@@ -455,11 +486,11 @@
             }
 
             // Scroll Tengah Function
-            function scrollToCenter(element) {
+            function scrollToSection(element) {
                 if (!element) return;
                 element.scrollIntoView({
                     behavior: 'smooth',
-                    block: 'center'
+                    block: element.id === 'profil' ? 'start' : 'center'
                 });
             }
 
@@ -473,7 +504,7 @@
                         const targetElement = document.querySelector(targetId);
                         if (targetElement) {
                             e.preventDefault();
-                            scrollToCenter(targetElement);
+                            scrollToSection(targetElement);
                         }
                     }
                 });
@@ -500,14 +531,14 @@
             const urlParams = new URLSearchParams(window.location.search);
             const scrollTarget = urlParams.get('scrollTo');
             if(scrollTarget === 'kategori'){
-                setTimeout(() => scrollToCenter(kategoriSection), 100);
+                setTimeout(() => scrollToSection(kategoriSection), 100);
             }
 
             // Handle hash on page load
             if (window.location.hash && window.location.hash !== '#kategori') {
                 const targetElement = document.querySelector(window.location.hash);
                 if (targetElement) {
-                    setTimeout(() => scrollToCenter(targetElement), 100);
+                    setTimeout(() => scrollToSection(targetElement), 100);
                 }
             }
         });
