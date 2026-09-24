@@ -124,16 +124,11 @@
         pointer-events: none;
         z-index: 3;
     }
-    .ak-hero .ak-stars,
-    .ak-hero .ak-meteors { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-    .ak-hero .ak-stars { z-index: 5; opacity: 1; background-image: radial-gradient(circle, rgba(255,255,255,1) 0 1.2px, transparent 1.8px), radial-gradient(circle, rgba(147,197,253,.95) 0 1.2px, transparent 1.8px), radial-gradient(circle, rgba(255,255,255,.9) 0 1.6px, transparent 2.2px); background-size: 137px 113px, 211px 179px, 317px 223px; background-position: 17px 21px, 83px 39px, 141px 7px; animation: ak-star-drift 18s linear infinite, ak-star-twinkle 3.4s ease-in-out infinite alternate; }
-    .ak-hero .ak-meteors { z-index: 5; }
-    .ak-hero .ak-meteor { position: absolute; top: -15%; left: var(--meteor-left); width: 3px; height: var(--meteor-length); border-radius: 999px; background: linear-gradient(to bottom, transparent, rgba(255,255,255,1) 55%, rgba(147,197,253,1)); box-shadow: 0 0 10px 3px rgba(147,197,253,.95); transform: rotate(35deg); animation: ak-meteor-fall var(--meteor-duration) linear var(--meteor-delay) infinite; opacity: 0; }
+    .ak-hero .ak-stars { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; opacity: 1; background-image: radial-gradient(circle, rgba(255,255,255,1) 0 1.2px, transparent 1.8px), radial-gradient(circle, rgba(147,197,253,.95) 0 1.2px, transparent 1.8px), radial-gradient(circle, rgba(255,255,255,.9) 0 1.6px, transparent 2.2px); background-size: 137px 113px, 211px 179px, 317px 223px; background-position: 17px 21px, 83px 39px, 141px 7px; animation: ak-star-drift 18s linear infinite, ak-star-twinkle 3.4s ease-in-out infinite alternate; }
     @keyframes ak-star-drift { to { background-position: 57px 81px, 133px 99px, 191px 67px; } }
     @keyframes ak-star-twinkle { from { opacity: .55; } to { opacity: 1; } }
-    @keyframes ak-meteor-fall { 0%, 72% { opacity: 0; transform: translate3d(0, -15vh, 0) rotate(35deg); } 76% { opacity: 1; } 100% { opacity: 0; transform: translate3d(-32vw, 115vh, 0) rotate(35deg); } }
     @media (prefers-reduced-motion: reduce) {
-        .ak-hero .ak-stars, .ak-hero .ak-meteor { animation: none; }
+        .ak-hero .ak-stars { animation: none; }
     }
     @media (max-width: 575.98px) {
         .ak-hero { height: clamp(420px, 86svh, 680px); min-height: 420px; padding: 1.25rem 0; border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
@@ -193,13 +188,6 @@
     }
     .ak-catalog {
         scroll-margin-top: calc(var(--nav-height, 72px) + 32px);
-    }
-    .ak-catalog.catalog-arrival {
-        animation: ak-catalog-arrival .9s ease-out;
-    }
-    @keyframes ak-catalog-arrival {
-        0% { background-color: rgba(37, 99, 235, .16); }
-        100% { background-color: transparent; }
     }
     html {
         scroll-behavior: smooth;
@@ -315,15 +303,9 @@
     <!-- Hero -->
     <header class="ak-hero text-center">
         <div class="ak-hero-media">
-            <img class="ak-hero-image" src="{{ asset('assets/img/Header Pic.png') }}" alt="Header">
+            <img class="ak-hero-image" src="{{ asset('assets/img/Header Pic.png') }}?v={{ @filemtime(public_path('assets/img/Header Pic.png')) }}" alt="Header">
         </div>
         <div class="ak-stars" aria-hidden="true"></div>
-        <div class="ak-meteors" aria-hidden="true">
-            <span class="ak-meteor" style="--meteor-left: 78%; --meteor-length: 110px; --meteor-duration: 5.5s; --meteor-delay: 1s;"></span>
-            <span class="ak-meteor" style="--meteor-left: 62%; --meteor-length: 82px; --meteor-duration: 7s; --meteor-delay: 3.4s;"></span>
-            <span class="ak-meteor" style="--meteor-left: 91%; --meteor-length: 130px; --meteor-duration: 6.5s; --meteor-delay: 5.2s;"></span>
-            <span class="ak-meteor" style="--meteor-left: 42%; --meteor-length: 72px; --meteor-duration: 8s; --meteor-delay: 7s;"></span>
-        </div>
         <div class="ak-hero-content">
             <h1>Platform Sewa Kostum Rei Cosrent</h1>
             <p>Menyewakan kostum secara real-time dengan fitur availability dan kalender pemesanan.</p>
@@ -519,11 +501,6 @@
                         behavior: 'smooth',
                         block: 'start'
                     });
-                    window.setTimeout(function () {
-                        kategoriSection.classList.remove('catalog-arrival');
-                        void kategoriSection.offsetWidth;
-                        kategoriSection.classList.add('catalog-arrival');
-                    }, 650);
                 });
             });
 
